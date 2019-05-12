@@ -106,13 +106,19 @@ train_data = TensorDataset(torch.from_numpy(train_x), torch.from_numpy(train_y))
 valid_data = TensorDataset(torch.from_numpy(val_x), torch.from_numpy(val_y))
 test_data = TensorDataset(torch.from_numpy(test_x), torch.from_numpy(test_y))
 batch_size = 50
-tran_loader = DataLoader(train_data, batch_size, True)
+train_loader = DataLoader(train_data, batch_size, True)
 test_loader = DataLoader(test_data, batch_size, True)
 val_loader = DataLoader(valid_data, batch_size, True)
 
 dataiter = iter(train_loader)
 sample_x, sample_y = dataiter.next()
 
+# First checking if GPU is available
+train_on_gpu=torch.cuda.is_available()
+if(train_on_gpu):
+    print('Training on GPU.')
+else:
+    print('No GPU available, training on CPU.')
 
 class SentimentRNN(nn.Module):
   def __init__(self, vocab_size, output_size, embedding_dim, hidden_dim, n_layers, dropout_prob=0.5):
@@ -130,4 +136,44 @@ class SentimentRNN(nn.Module):
     self.sig = nn.Sigmoid()
 
   def forward(self, x, hidden):
+    batch_size = x.size(0)
+    x = x.long()
+    embeds = self.embedding(x)
+    lstm_out, hidden = self.lstm(embeds, hidden)
+    lstm_out = lstm_out.contiguous().view(-1, self.hidden_dim)
+    out = self.dropout(lstm_out)
+    out = self.fc(out)
+    # sigmoid function
+    sig_out = self.sig(out)
     
+    # reshape to be batch_size first
+    sig_out = sig_out.view(batch_size, -1)
+    sig_out = sig_out[:, -1] # get last batch of labels
+    
+    # return last sigmoid output and hidden state  Modu
+    return sig_out, hidden
+
+  def init_hidden(self, batch_size):
+    ''' Initializes hidden state '''
+    # Create two new tensors with sizes n_layers x batch_size x hidden_dim,
+    # initialized to zero, for hidden state and cell state of LSTM
+    weight = next(self.parameters()).data
+    
+    if (train_on_gpu):
+        hidden = (weight.new(self.n_layers, batch_size, self.hidden_dim).zero_().cuda(),
+              weight.new(self.n_layers, batch_size, self.hidden_dim).zero_().cuda())
+    else:
+        hidden = (weight.new(self.n_layers, batch_size, self.hidden_dim).zero_(),
+                  weight.new(self.n_layers, batch_size, self.hidden_dim).zero_())
+    
+    return hidden
+
+# Instantiate the model w/ hyperparams
+vocab_size = len(vocab_to_int)+1 # +1 for the 0 padding + our word tokens
+output_size = 1
+embedding_dim = 400
+hidden_dim = 256
+n_layers = 2
+
+net = SentimentRNN(vocab_size, output_size, embedding_dim, hidden_dim, n_layers)
+print(net)
