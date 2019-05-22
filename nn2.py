@@ -120,28 +120,27 @@ if(train_on_gpu):
 else:
     print('No GPU available, training on CPU.')
 
+
+vocab_size = len(vocab_to_int)+1
+
+
 class SentimentRNN(nn.Module):
-    def __init__(self, vocab_size, output_size, embedding_dim, hidden_dim, n_layers, dropout_prob=0.5):
+    def __init__(self):
         super(SentimentRNN, self).__init__()
-        self.output_size = output_size
-        self.n_layers = n_layers
-        self.hidden_dim = hidden_dim
-
-        self.embedding = nn.Embedding(vocab_size, embedding_dim)
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, n_layers, dropout=dropout_prob, batch_first=True)
-
+        self.embedding = nn.Embedding(vocab_size, 400)
+        self.lstm = nn.LSTM(400, 256, 2, dropout=0.5, batch_first=True)
         self.dropout = nn.Dropout(0.3)
 
-        self.fc = nn.Linear(hidden_dim, output_size)
+        self.fc = nn.Linear(256, 1)
         self.sig = nn.Sigmoid()
 
-    def forward(self, x, hidden):
+    def forward(self, x):
         batch_size = x.size(0)
         x = x.long()
         embeds = self.embedding(x)
-        lstm_out, hidden = self.lstm(embeds, hidden)
-        lstm_out = lstm_out.contiguous().view(-1, self.hidden_dim)
-        out = self.dropout(lstm_out)
+        lstm_out= self.lstm(embeds)
+
+        out = self.dropout(lstm_out[0])
         out = self.fc(out)
         # sigmoid function
         sig_out = self.sig(out)
@@ -151,31 +150,16 @@ class SentimentRNN(nn.Module):
         sig_out = sig_out[:, -1] # get last batch of labels
 
         # return last sigmoid output and hidden state  Modu
-        return sig_out, hidden
-
-    def init_hidden(self, batch_size):
-        ''' Initializes hidden state '''
-        # Create two new tensors with sizes n_layers x batch_size x hidden_dim,
-        # initialized to zero, for hidden state and cell state of LSTM
-        weight = next(self.parameters()).data
-
-        if (train_on_gpu):
-            hidden = (weight.new(self.n_layers, batch_size, self.hidden_dim).zero_().cuda(),
-                      weight.new(self.n_layers, batch_size, self.hidden_dim).zero_().cuda())
-        else:
-            hidden = (weight.new(self.n_layers, batch_size, self.hidden_dim).zero_(),
-                      weight.new(self.n_layers, batch_size, self.hidden_dim).zero_())
-
-        return hidden
+        return sig_out
 
 # Instantiate the model w/ hyperparams
-vocab_size = len(vocab_to_int)+1 # +1 for the 0 padding + our word tokens
+# vocab_size = len(vocab_to_int)+1 # +1 for the 0 padding + our word tokens
 output_size = 1
 embedding_dim = 400
 hidden_dim = 256
 n_layers = 2
 
-net = SentimentRNN(vocab_size, output_size, embedding_dim, hidden_dim, n_layers)
+net = SentimentRNN()
 # print(net)
 lr = 0.01
 criterion = nn.BCELoss()
@@ -192,52 +176,31 @@ net.train()
 
 # train for some number of epochs
 for e in range(epochs):
-    # initialize hidden state
-    h = net.init_hidden(batch_size)
-
     # batch loop
     for inputs, labels in train_loader:
+        print(inputs.size)
         # counter += 1
-        if(train_on_gpu):
-            inputs, labels = inputs.cuda(), labels.cuda()
+        # if(train_on_gpu):
+        #     inputs, labels = inputs.cuda(), labels.cuda()
 
         # Creating new variables for the hidden state, otherwise
         # we'd backprop through the entire training history
-        h = tuple([each.data for each in h])
 
         # zero accumulated gradients
         net.zero_grad()
 
         # get the output from the model
-        output, h = net(inputs, h)
-        print(output)
+        output= net(inputs)
         # calculate the loss and perform backprop
         loss = criterion(output.squeeze(), labels.float())
-        loss.backward()
+        print(loss)
+        loss.backward(retain_graph=True)
         # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
         nn.utils.clip_grad_norm_(net.parameters(), clip)
         optimizer.step()
 
-        # loss stats
-        # if counter % print_every == 0:
-# Get validation loss
-# val_h = net.init_hidden(batch_size)
-# val_losses = []
-# net.eval()
-# for inputs, labels in val_loader:
-#     # Creating new variables for the hidden state, otherwise
-#     # we'd backprop through the entire training history
-#     val_h = tuple([each.data for each in val_h])
-#
-#     if(train_on_gpu):
-#         inputs, labels = inputs.cuda(), labels.cuda()
-#
-#     output, val_h = net(inputs, val_h)
-#     val_loss = criterion(output.squeeze(), labels.float())
-#
-#     val_losses.append(val_loss.item())
 
-net.train()
+
 print("Epoch: {}/{}...".format(e+1, epochs),
       "Step: {}...".format(counter),
       "Loss: {:.6f}...".format(loss.item()))
